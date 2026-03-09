@@ -1,4 +1,4 @@
-# /triage-nda -- NDA Pre-Screening
+# /triage-nda — NDA Pre-Screening
 
 > If you see unfamiliar placeholders or need to check which tools are connected, see [CONNECTORS.md](../CONNECTORS.md).
 
@@ -45,7 +45,7 @@ Using the `ms365` SharePoint connector, search for the company's folder under Bl
 
 Record the full SharePoint path of the retrieved file — this is where the output will be saved in Step 8.
 
-7. Copy the original file from the OneDrive-synced local path to the VM working directory so Step 7 can start from a byte-perfect copy.
+7. Copy the original file from the OneDrive-synced local path to the VM working directory so Step 5 can start from a byte-perfect copy.
 
 > **⚠️ IMPORTANT — Do NOT attempt Graph API download or token hunting.**
 > The MS365 connector's access token is managed by Anthropic's cloud infrastructure. It is **never** available as an environment variable, in the Windows Credential Manager, MSAL cache, process environment, or any location accessible from the VM or local Windows shell. Searching for it is wasted effort and will always fail. Use the OneDrive sync path instead.
@@ -62,100 +62,44 @@ Use Desktop Commander `list_directory` or `start_search` to confirm the exact su
 Copy-Item -Path "C:\Users\orlan\blumeequity.com\Blume Equity - Documents\2. Pipeline\Deals 2026\[Company]\Admin (NDAs etc)\[filename].docx" -Destination "C:\Users\orlan\AppData\Roaming\Claude\local-agent-mode-sessions\<session-id>\<agent-id>\local_<local-id>\outputs\[filename].docx"
 ```
 
-The VM outputs folder Windows path can be found via Desktop Commander `get_config` → `allowedDirectories`, or by checking the known mapping: the VM path `/sessions/vibrant-serene-goldberg/mnt/outputs/` maps to a Windows path under `C:\Users\orlan\AppData\Roaming\Claude\local-agent-mode-sessions\`.
+The VM outputs folder Windows path can be found via Desktop Commander `get_config` → `allowedDirectories`, or by checking the known mapping: the VM path `/sessions/<session-name>/mnt/outputs/` maps to a Windows path under `C:\Users\orlan\AppData\Roaming\Claude\local-agent-mode-sessions\`.
 
 Record the exact OneDrive folder path used — this is where the output will be copied back in Step 8.
 
-### Step 3: Load NDA Playbook
+### Step 3: Read the NDA (token-efficient method)
 
-Apply Blume Equity's NDA playbook as defined in the `nda-triage` skill. Key Blume-specific positions:
+**Always use python-docx via Bash — never use Desktop Commander's `read_file` on a DOCX.**
 
-- **2-year standard term** (flag anything over 24 months)
-- **England and Wales** preferred governing law
-- **Portfolio companies excluded** from permitted recipients by default
-- **IAC and committee papers** must be retainable
-- **Non-solicitation** must be limited to targeted hiring only
-- **Non-compete, exclusivity, and IP provisions** are automatic RED flags
-- **Signing authority**: Michelle, Eleanor, or Clare
-- **Standard templates**: Blume has a 2-way and 1-way NDA template available for counterproposals
+Desktop Commander's XML mode on DOCX files returns thousands of tokens of verbose namespace markup per chunk, and requires multiple reads to cover the full document. python-docx extracts clean paragraph text in a single pass for a fraction of the token cost.
 
-### Step 4: Quick Screen
+```python
+# Run via Bash: python3 << 'EOF'
+from docx import Document
 
-Evaluate the NDA against Blume's key criteria. Focus on substance — do not flag formatting differences or minor wording variations.
+path = "/sessions/<session-name>/mnt/outputs/[filename].docx"
+doc = Document(path)
 
-| Criterion | Check |
-|-----------|-------|
-| **Mutual vs. Unilateral** | Is the NDA type appropriate for the relationship? |
-| **Definition of Confidential Information** | Reasonably scoped? Not capturing all information indiscriminately? |
-| **Term** | 24 months or less? If longer, is there a trade secret carveout? |
-| **Standard Carveouts** | Public knowledge, prior knowledge, third-party receipt, legal compulsion all present? |
-| **Permitted Recipients** | Can share with advisors and LPs? Are portfolio companies excluded from automatic scope? |
-| **IAC Paper Retention** | Right to retain information in committee papers and automated backups? |
-| **Non-Solicitation** | If present, limited to targeted solicitation of named individuals only? |
-| **Non-Compete / Exclusivity / IP** | Any non-compete, exclusivity, standstill, or IP provision? (Automatic RED) |
-| **Governing Law** | England & Wales or other standard commercial jurisdiction? |
-
-### Step 5: Classify
-
-Based on the screening results, assign a classification:
-
-#### GREEN — Standard Approval
-All key criteria met. NDA is consistent with Blume's standard positions.
-- **Route**: Michelle, Eleanor, or Clare to sign
-- **Action**: Proceed to signature
-
-#### YELLOW — Counsel Review Needed
-One or more minor deviations — potentially acceptable with a small redline:
-- Term over 24 months but under 5 years
-- Missing one standard carveout
-- Affiliate scope may capture portfolio companies
-- Non-solicitation is broader than targeted
-- No explicit IAC/committee paper retention right
-- Non-preferred but acceptable governing law
-- **Route**: Michelle, Eleanor, or Clare with specific issues flagged
-- **Action**: Typically resolved in one review pass
-
-#### RED — Significant Issues
-One or more material problems:
-- Wrong mutual/unilateral direction
-- Non-compete, exclusivity, standstill, or IP provision present
-- Term over 5 years or perpetual
-- Overbroad definition of confidential information
-- No right to share with advisors or LPs
-- Portfolio companies automatically included as permitted recipients
-- Prohibition on retaining IAC/committee papers
-- Unusual governing law
-- **Route**: Michelle, Eleanor, or Clare for full review
-- **Action**: Do not sign; offer Blume's standard NDA as counterproposal
-
-### Step 6: Generate Triage Report
-
-Prepare a concise triage report. Only list genuine issues — if the NDA is GREEN, a brief confirmation is sufficient. Output this report directly in chat. Do NOT embed it in the document — the document contains tracked changes only.
-
-```
-## NDA Triage Report — Blume Equity
-
-**Classification**: [GREEN / YELLOW / RED]
-**Parties**: [party names]
-**Type**: [Mutual / Unilateral]
-**Term**: [duration]
-**Governing Law**: [jurisdiction]
-
-## Issues Found
-
-### [Issue title — YELLOW / RED]
-**What**: [description]
-**Risk**: [what could go wrong for Blume]
-**Suggested Fix**: [specific language or approach]
-
-[Repeat for each genuine issue only]
-
-## Recommendation
-
-[Specific next step: route to Michelle/Eleanor/Clare to sign, route with specific notes for a quick redline, or reject/counterpropose with Blume's standard template]
+print("=== ALL PARAGRAPHS ===")
+for i, para in enumerate(doc.paragraphs):
+    text = para.text.strip()
+    if text:
+        print(f"[{i}] {text}")
+# EOF
 ```
 
-### Step 7: Create Redlined Document
+The full paragraph list gives you everything you need for triage — typically 50–80 paragraphs, well under 3,000 tokens.
+
+### Step 4: Screen and Classify
+
+Apply Blume Equity's NDA playbook as defined in the **`nda-triage` skill**. The skill contains all screening criteria, classification rules (GREEN/YELLOW/RED), Blume-specific positions, what to flag, what NOT to flag, and the standard redline positions for common issues.
+
+Load and follow the skill — do not duplicate its content here.
+
+### Step 5: Generate Triage Report
+
+Prepare a concise triage report using the format defined in the `nda-triage` skill. Output this report directly in chat. Do NOT embed it in the document — the document contains tracked changes only.
+
+### Step 6: Create Redlined Document (YELLOW and RED only)
 
 For **YELLOW and RED** classifications, automatically produce a redlined version of the NDA. Do this without asking — just do it. For GREEN, skip this step.
 
@@ -188,8 +132,7 @@ doc = Document(output_path)
 ---
 
 **Document structure**:
-
-The document is the original NDA body with tracked changes applied inline — nothing else. No triage report, no cover page, no separator. The triage report lives in chat only (Step 6). No reformatting of any kind — tracked changes only wrap the text content, never the paragraph or run formatting properties.
+The document is the original NDA body with tracked changes applied inline — nothing else. No triage report, no cover page, no separator. The triage report lives in chat only (Step 5). No reformatting of any kind — tracked changes only wrap the text content, never the paragraph or run formatting properties.
 
 ---
 
@@ -249,6 +192,7 @@ def tracked_insert_run(new_text, existing_rpr_xml=None):
     return ins_el
 
 def replace_text_in_para_with_tracked_change(para, old_text, new_text):
+    """Find old_text in a paragraph and replace it with a tracked deletion + insertion."""
     full_text = para.text
     if old_text not in full_text:
         return False
@@ -288,6 +232,7 @@ def replace_text_in_para_with_tracked_change(para, old_text, new_text):
     return False
 
 def add_tracked_insertion_after_para(para, inserted_text):
+    """Insert a new paragraph with tracked-insertion text immediately after the given paragraph."""
     new_p = OxmlElement('w:p')
     orig_ppr = para._p.find(qn('w:pPr'))
     if orig_ppr is not None:
@@ -297,6 +242,7 @@ def add_tracked_insertion_after_para(para, inserted_text):
     para._p.addnext(new_p)
 
 def mark_para_for_deletion(para):
+    """Wrap every run in a paragraph in <w:del> tracked-change elements."""
     for run in para.runs:
         rpr_xml = run._r.find(qn('w:rPr'))
         text = run.text
@@ -314,7 +260,7 @@ def mark_para_for_deletion(para):
 
 **Application strategy — locate and redline each issue**:
 
-Search for key phrases from each flagged clause among the document's paragraphs. Match using substring search across `para.text`. For each issue:
+Search for key phrases from each flagged clause among the document's paragraphs. Match using substring search across `para.text`. For each issue, use the redline positions from the `nda-triage` skill to determine the replacement language:
 
 - **Text to replace** (e.g., overbroad language, wrong term duration): use `replace_text_in_para_with_tracked_change(para, old_text, new_text)`
 - **Missing provision to insert** (e.g., missing carveout, missing IAC retention clause): use `add_tracked_insertion_after_para(nearest_para, suggested_text)` to insert the new language as a tracked insertion immediately after the most relevant existing paragraph
@@ -336,9 +282,25 @@ Search for key phrases from each flagged clause among the document's paragraphs.
 
 ---
 
+**Run-level inspection** (only when needed for redlining — not for triage):
+
+If you need to inspect specific runs to get precise text boundaries for redlining, add this targeted block after the paragraph dump, only for the paragraphs you'll edit:
+
+```python
+# Run via Bash — only when you need run-level detail for redlining
+for i, para in enumerate(doc.paragraphs):
+    if i in [15, 19, 32, 37, 54]:  # only the paragraphs you'll touch
+        print(f"\n--- PARA [{i}] RUNS ---")
+        for j, run in enumerate(para.runs):
+            if run.text:
+                print(f"  run[{j}]: {repr(run.text)}")
+```
+
+---
+
 **Final save**: Call `doc.save(output_path)` — no prompts, no confirmation.
 
-### Step 8: Deliver Output
+### Step 7: Deliver Output
 
 The delivery method depends on how the NDA was provided:
 
@@ -362,9 +324,10 @@ Copy-Item -Path "C:\Users\orlan\AppData\Roaming\Claude\local-agent-mode-sessions
 - After the copy succeeds, confirm in chat: "Saved `[filename] Blume comments.docx` to `[SharePoint folder path]` — OneDrive will sync automatically."
 - Do NOT send the file in chat — it will appear in SharePoint once OneDrive syncs (typically within seconds)
 
-### Step 9: Routing Suggestion
+### Step 8: Routing Suggestion
 
 Based on the classification:
+
 - **GREEN**: Route to Michelle, Eleanor, or Clare for signature. No further review needed.
 - **YELLOW**: Share the redlined document with Michelle, Eleanor, or Clare — the specific issues are flagged in the document for a single review pass.
 - **RED**: Do not sign. Share the redlined document with Michelle, Eleanor, or Clare for full review. Offer Blume's standard 2-way or 1-way NDA template as a counterproposal.
