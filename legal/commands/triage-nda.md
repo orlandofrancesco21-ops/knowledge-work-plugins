@@ -34,7 +34,7 @@ Look for NDA screening criteria in local settings (e.g., `legal.local.md`).
 
 The NDA playbook should define:
 - Mutual vs. unilateral requirements
-- Acceptable term lengths
+- Acceptable trm lengths
 - Required carveouts
 - Prohibited provisions
 - Organization-specific requirements
